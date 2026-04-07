@@ -1,0 +1,14 @@
+Assignment 3 has been released on Moodle. This thread will be used for any updates to the problem statement, so please stay active here. If you have any queries, post them in this thread only. Deadline is 10th April 2026 EOD.
+1. Setup for HPC    
+Find appropriate openmpi module from `module avail` the load it for example `module load amd/compilers/gcc/openmpi/5.0.8`
+2. Constraints  
+10 <= N <= 1200  
+0 <= E <= N*(N-1)/2  
+10 <= B <= 1000  
+1<= p(v) , c(v) <= 100
+We dont expect you to cover entire space . Sequential test cases are designed to finish within 30 minutes using the provided pseudo-code. You are responsible for generating your own graphs for local testing and performance scaling. Please strictly follow the required Branch and Bound heuristics for your MPI implementation.   
+
+3. In case of two or more cliques having same maximum P , you can return any of them.
+4. Here is the attached test graph for report
+
+input_report.txt
