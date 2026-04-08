@@ -19,7 +19,7 @@ import random
 import sys
 
 
-def generate(N: int, E: int, B: int, seed: int | None, out_path: str | None):
+def generate(N: int, E: int, B: int, seed, out_path):
     max_edges = N * (N - 1) // 2
     E = min(E, max_edges)
 
