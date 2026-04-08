@@ -54,10 +54,10 @@ generate_inputs() {
     # Uncomment individually as needed.
     #
     # N=500, sparse (density 0.2) – many candidates, budget-constrained; B=500
-    # python3 gen.py -N 500  --density 0.2 -B 500  -s 30 -o hpc_tests/xlarge_sparse.txt
+    python3 gen.py -N 500  --density 0.2 -B 500  -s 30 -o hpc_tests/xlarge_sparse.txt
     #
     # N=500, dense (density 0.6) – strong structural pruning, B=200
-    # python3 gen.py -N 500  --density 0.6 -B 200  -s 31 -o hpc_tests/xlarge_dense.txt
+    python3 gen.py -N 500  --density 0.6 -B 200  -s 31 -o hpc_tests/xlarge_dense.txt
     #
     # N=800, medium density – stresses both bounds equally, B=400
     # python3 gen.py -N 800  --density 0.4 -B 400  -s 40 -o hpc_tests/xxlarge_a.txt
