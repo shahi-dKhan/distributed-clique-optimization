@@ -45,29 +45,29 @@ generate_all() {
     hdr "Generating test graphs  →  $DIR/"
     mkdir -p "$DIR"
 
-    # ── Correctness group: quick sequential (< ~10s each) ────────────────────
-    # These are also used for scaling to show the "too-easy" regime.
-    python3 gen.py -N   30 --density 0.70 -B  60 -s  1 -o "$DIR/n030_d70_b060.txt"
-    python3 gen.py -N   50 --density 0.65 -B  80 -s  2 -o "$DIR/n050_d65_b080.txt"
-    python3 gen.py -N   80 --density 0.60 -B 100 -s  3 -o "$DIR/n080_d60_b100.txt"
-    python3 gen.py -N  100 --density 0.55 -B 120 -s  4 -o "$DIR/n100_d55_b120.txt"
-    python3 gen.py -N  150 --density 0.50 -B 150 -s  5 -o "$DIR/n150_d50_b150.txt"
-    python3 gen.py -N  200 --density 0.50 -B 180 -s  6 -o "$DIR/n200_d50_b180.txt"
+    # ── Correctness group: N ≤ 200, sequential finishes in < 10s ───────────────
+    # Density held at 0.55–0.60; B scaled with N so clique size stays ~3–5.
+    python3 gen.py -N   30 --density 0.60 -B  60 -s  1 -o "$DIR/n030_d60_b060.txt"
+    python3 gen.py -N   50 --density 0.60 -B  80 -s  2 -o "$DIR/n050_d60_b080.txt"
+    python3 gen.py -N   80 --density 0.55 -B 100 -s  3 -o "$DIR/n080_d55_b100.txt"
+    python3 gen.py -N  100 --density 0.55 -B 110 -s  4 -o "$DIR/n100_d55_b110.txt"
+    python3 gen.py -N  150 --density 0.50 -B 120 -s  5 -o "$DIR/n150_d50_b120.txt"
+    python3 gen.py -N  200 --density 0.50 -B 130 -s  6 -o "$DIR/n200_d50_b130.txt"
 
-    # ── Scaling group: hard enough to benefit from parallelism ────────────────
-    # Medium (sequential ~10-60s)
-    python3 gen.py -N  300 --density 0.50 -B 200 -s 10 -o "$DIR/n300_d50_b200.txt"
-    python3 gen.py -N  400 --density 0.45 -B 150 -s 11 -o "$DIR/n400_d45_b150.txt"
+    # ── Scaling group: parallel vs sequential comparison ──────────────────────
+    # Density stays 0.45–0.55 throughout; B tightened as N grows to keep
+    # sequential under ~5 min. Tight B activates the knapsack bound heavily.
+    python3 gen.py -N  300 --density 0.50 -B 120 -s 10 -o "$DIR/n300_d50_b120.txt"   # est. ~15s seq
+    python3 gen.py -N  400 --density 0.50 -B 110 -s 11 -o "$DIR/n400_d50_b110.txt"   # est. ~60s seq
+    python3 gen.py -N  500 --density 0.50 -B 100 -s 12 -o "$DIR/n500_d50_b100.txt"   # est. ~2-5 min seq
+    python3 gen.py -N  500 --density 0.60 -B  90 -s 13 -o "$DIR/n500_d60_b090.txt"   # ~150s seq (like report)
 
-    # Large — dense+tight budget is the hardest regime
-    python3 gen.py -N  500 --density 0.60 -B  90 -s 12 -o "$DIR/n500_d60_b090.txt"   # ~150s seq
-    python3 gen.py -N  500 --density 0.60 -B 200 -s 13 -o "$DIR/n500_d60_b200.txt"   # ~25s seq
-
-    # Extra-large — kept sparse/very-tight so sequential stays under 30 min
-    python3 gen.py -N  600 --density 0.20 -B 150 -s 14 -o "$DIR/n600_d20_b150.txt"
-    python3 gen.py -N  800 --density 0.15 -B 200 -s 15 -o "$DIR/n800_d15_b200.txt"
-    python3 gen.py -N 1000 --density 0.10 -B 300 -s 16 -o "$DIR/n1000_d10_b300.txt"
-    python3 gen.py -N 1200 --density 0.08 -B 400 -s 17 -o "$DIR/n1200_d08_b400.txt"
+    # ── Large group: parallel-only (sequential likely > 30 min) ──────────────
+    # Density kept at 0.45–0.50; very tight B keeps the knapsack bound sharp.
+    python3 gen.py -N  600 --density 0.50 -B  95 -s 14 -o "$DIR/n600_d50_b095.txt"
+    python3 gen.py -N  800 --density 0.45 -B  92 -s 15 -o "$DIR/n800_d45_b092.txt"
+    python3 gen.py -N 1000 --density 0.45 -B  90 -s 16 -o "$DIR/n1000_d45_b090.txt"
+    python3 gen.py -N 1200 --density 0.40 -B  90 -s 17 -o "$DIR/n1200_d40_b090.txt"
 
     # Also note the provided report graph
     [ -f input_report.txt ] && info "input_report.txt present — will be included in scaling"
@@ -121,12 +121,12 @@ run_correctness() {
     trap cleanup EXIT
 
     for INPUT in \
-        "$DIR/n030_d70_b060.txt" \
-        "$DIR/n050_d65_b080.txt" \
-        "$DIR/n080_d60_b100.txt" \
-        "$DIR/n100_d55_b120.txt" \
-        "$DIR/n150_d50_b150.txt" \
-        "$DIR/n200_d50_b180.txt"
+        "$DIR/n030_d60_b060.txt" \
+        "$DIR/n050_d60_b080.txt" \
+        "$DIR/n080_d55_b100.txt" \
+        "$DIR/n100_d55_b110.txt" \
+        "$DIR/n150_d50_b120.txt" \
+        "$DIR/n200_d50_b130.txt"
     do
         [ -f "$INPUT" ] || continue
         N_VAL=$(awk 'NR==1{print $1}' "$INPUT")
@@ -193,20 +193,20 @@ run_scaling() {
     [ -f input_report.txt ] && scale_one "input_report.txt"
 
     for INPUT in \
-        "$DIR/n030_d70_b060.txt"   \
-        "$DIR/n050_d65_b080.txt"   \
-        "$DIR/n080_d60_b100.txt"   \
-        "$DIR/n100_d55_b120.txt"   \
-        "$DIR/n150_d50_b150.txt"   \
-        "$DIR/n200_d50_b180.txt"   \
-        "$DIR/n300_d50_b200.txt"   \
-        "$DIR/n400_d45_b150.txt"   \
+        "$DIR/n030_d60_b060.txt"   \
+        "$DIR/n050_d60_b080.txt"   \
+        "$DIR/n080_d55_b100.txt"   \
+        "$DIR/n100_d55_b110.txt"   \
+        "$DIR/n150_d50_b120.txt"   \
+        "$DIR/n200_d50_b130.txt"   \
+        "$DIR/n300_d50_b120.txt"   \
+        "$DIR/n400_d50_b110.txt"   \
+        "$DIR/n500_d50_b100.txt"   \
         "$DIR/n500_d60_b090.txt"   \
-        "$DIR/n500_d60_b200.txt"   \
-        "$DIR/n600_d20_b150.txt"   \
-        "$DIR/n800_d15_b200.txt"   \
-        "$DIR/n1000_d10_b300.txt"  \
-        "$DIR/n1200_d08_b400.txt"
+        "$DIR/n600_d50_b095.txt"   \
+        "$DIR/n800_d45_b092.txt"   \
+        "$DIR/n1000_d45_b090.txt"  \
+        "$DIR/n1200_d40_b090.txt"
     do
         scale_one "$INPUT"
     done
