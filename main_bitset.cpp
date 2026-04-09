@@ -118,35 +118,35 @@ static vector<int> bits_to_vec(const vector<uint64_t>& bits) {
  * Track conflicts with bitset: conflict[c] |= adj_bits[v] when v is placed.
  * Upper bound = sum of max profit per class.
  */
-static int colorBound(const vector<uint64_t>& cand_bits) {
-    vector<vector<uint64_t>> conflict;
-    vector<int> class_max;
-    conflict.reserve(32);
-    class_max.reserve(32);
+// static int colorBound(const vector<uint64_t>& cand_bits) {
+//     vector<vector<uint64_t>> conflict;
+//     vector<int> class_max;
+//     conflict.reserve(32);
+//     class_max.reserve(32);
 
-    for (int v : profit_order) {
-        if (!test_bit(cand_bits, v)) continue;
+//     for (int v : profit_order) {
+//         if (!test_bit(cand_bits, v)) continue;
 
-        bool placed = false;
-        for (int c = 0; c < (int)conflict.size(); c++) {
-            if (test_bit(conflict[c], v)) continue;   // v adjacent to some member
-            if (profit[v] > class_max[c]) class_max[c] = profit[v];
-            for (int w = 0; w < WORDS; w++)
-                conflict[c][w] |= adj_bits[v][w];     // mark v's neighbors as conflicting
-            placed = true; break;
-        }
-        if (!placed) {
-            conflict.emplace_back(WORDS, 0ULL);
-            class_max.push_back(profit[v]);
-            for (int w = 0; w < WORDS; w++)
-                conflict.back()[w] |= adj_bits[v][w];
-        }
-    }
+//         bool placed = false;
+//         for (int c = 0; c < (int)conflict.size(); c++) {
+//             if (test_bit(conflict[c], v)) continue;   // v adjacent to some member
+//             if (profit[v] > class_max[c]) class_max[c] = profit[v];
+//             for (int w = 0; w < WORDS; w++)
+//                 conflict[c][w] |= adj_bits[v][w];     // mark v's neighbors as conflicting
+//             placed = true; break;
+//         }
+//         if (!placed) {
+//             conflict.emplace_back(WORDS, 0ULL);
+//             class_max.push_back(profit[v]);
+//             for (int w = 0; w < WORDS; w++)
+//                 conflict.back()[w] |= adj_bits[v][w];
+//         }
+//     }
 
-    int U = 0;
-    for (int mx : class_max) U += mx;
-    return U;
-}
+//     int U = 0;
+//     for (int mx : class_max) U += mx;
+//     return U;
+// }
 
 /* ── Resource bound: pre-sorted fractional knapsack ────────────────────── */
 static double knapsackBound(const vector<uint64_t>& cand_bits, int rem_budget) {
