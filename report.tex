@@ -1,0 +1,119 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{hyperref}
+\usepackage{parskip}
+
+\title{\textbf{Distributed Budgeted Maximum-Weight Clique}\\[4pt]
+       \large MPI Branch-and-Bound: Parallelisation Strategy \& Scaling Results}
+\author{ee1221163}
+\date{}
+
+\begin{document}
+\maketitle
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section*{Problem}
+
+Given a graph $G=(V,E)$ with per-vertex profit $p(v)$ and cost $c(v)$, and a
+budget $B$, find a clique $S\subseteq V$ that maximises
+$\sum_{v\in S} p(v)$ subject to $\sum_{v\in S} c(v)\le B$.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section*{Parallelisation Strategy}
+
+The solver is an exact branch-and-bound (B\&B) with two pruning bounds:
+
+\begin{itemize}
+  \item \textbf{Structural bound (greedy graph colouring).}
+        Candidates are greedily assigned to independent sets (colour classes)
+        in decreasing profit order. The sum of the maximum profit per class
+        upper-bounds the profit of any clique formed from those candidates.
+
+  \item \textbf{Resource bound (fractional knapsack).}
+        Candidates are packed into the remaining budget in decreasing
+        profit/cost ratio order (fractional last item allowed), giving an
+        upper bound on achievable profit within the budget.
+\end{itemize}
+
+\subsection*{Bitset-accelerated candidate sets}
+
+Adjacency is stored as per-vertex bitsets (\texttt{uint64\_t} words,
+$\lceil N/64 \rceil$ words per vertex).  The next candidate set after
+branching on vertex $v$ is computed as a bitwise AND:
+\[
+  C_{\text{next}} = C_{\text{rem}} \;\mathbin{\&}\; \mathrm{adj}[v]
+\]
+in $O(N/64)$ operations instead of an $O(k)$ linear scan.
+For $N=500$ with $k\approx400$ remaining candidates, this reduces the
+intersection from $\sim$400 comparisons to $\sim$8 64-bit AND operations.
+Both bounds iterate globally pre-sorted arrays (\texttt{profit\_order},
+\texttt{ratio\_order}) with a $O(1)$ bit-test to skip non-candidates,
+eliminating per-call sorting entirely.
+
+\subsection*{Work distribution}
+
+All vertices affordable within $B$ form the \emph{initial candidate set}.
+At the \textbf{first branching level}, tasks are distributed among $P$ ranks
+using \textbf{static round-robin}: rank $r$ processes every $P$-th vertex
+($0, P, 2P, \ldots$ for rank~0; $1, P{+}1, 2P{+}1, \ldots$ for rank~1,
+etc.).  All ranks run the same outer loop so the shrinking candidate bitset
+stays identical across ranks; each rank computes its subtree's $C_{\text{next}}$
+independently with no communication.  Below the first level each rank runs its
+own sequential B\&B.
+
+\subsection*{Asynchronous global lower-bound sharing}
+
+Whenever a rank discovers a new best profit $P_{\max}$ it immediately
+broadcasts the value to all other ranks via \texttt{MPI\_Isend}
+(non-blocking).  Before computing bounds at each B\&B node, every rank drains
+its inbox with \texttt{MPI\_Iprobe} + \texttt{MPI\_Recv}.  A tighter shared
+lower bound prunes more branches across all ranks simultaneously, reducing
+redundant work.
+
+After local searches finish, \texttt{MPI\_Allreduce} with \texttt{MPI\_MAXLOC}
+selects the rank holding the true best clique (using the actual clique profit,
+not the potentially inflated $P_{\max}$); that rank broadcasts the vertex list
+and rank~0 writes the output.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section*{Strong Scaling Results}
+
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=\linewidth]{speedup_input_report.pdf}
+  \caption{Strong scaling on \texttt{input\_report.txt}
+           ($N=500$, $E=74{,}743$, $B=90$).
+           Left: speedup $T_1/T_p$. Right: parallel efficiency.}
+\end{figure}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{rrrrrr}
+\toprule
+Procs & $T$ (s) & Speedup & Efficiency \\
+\midrule
+1  & 117.6 & 1.00  & 100.0\% \\
+2  &  63.8 & 1.85  &  92.2\% \\
+4  &  33.0 & 3.56  &  89.1\% \\
+8  &  19.5 & 6.04  &  75.5\% \\
+16 &  13.0 & 9.06  &  56.6\% \\
+\bottomrule
+\end{tabular}
+\caption{Bitset variant timing on \texttt{input\_report.txt}.
+         Efficiency drops at 16 ranks due to load imbalance from
+         static round-robin distribution at the first branching level.}
+\end{table}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section*{Compilation}
+
+\begin{verbatim}
+g++    -O3 -std=c++17 sequential.cpp  -o seq_bin
+mpic++ -O3 -std=c++17 main_bitset.cpp -o par_bin
+mpirun -np 16 ./par_bin input_report.txt output.txt
+\end{verbatim}
+
+\end{document}
