@@ -1,0 +1,22 @@
+main_bitset.cpp: In function ‘int colorBound(const std::vector<long unsigned int>&)’:
+main_bitset.cpp:163:42: error: ‘adj’ was not declared in this scope
+  163 |             for (int u : classes[i]) if (adj[v][u]) { ok = false; break; }
+      |                                          ^~~
+main_bitset.cpp:46:26: error: redefinition of ‘std::vector<std::vector<long unsigned int> > adj_bits’
+   46 | vector<vector<uint64_t>> adj_bits;   // adj_bits[u]: WORDS-word bitset of neighbors
+      |                          ^~~~~~~~
+main_bitset.cpp:44:26: note: ‘std::vector<std::vector<long unsigned int> > adj_bits’ previously declared here
+   44 | vector<vector<uint64_t>> adj_bits;   // adj_bits[u]: WORDS-word bitset of neighbors
+      |                          ^~~~~~~~
+main_bitset.cpp: In function ‘void findClique(const std::vector<long unsigned int>&, int, int)’:
+main_bitset.cpp:222:29: error: invalid initialization of reference of type ‘const std::vector<int>&’ from expression of type ‘const std::vector<long unsigned int>’
+  222 |     if (P_curr + colorBound(cand_bits) <= P_max) return;
+      |                             ^~~~~~~~~
+main_bitset.cpp:154:42: note: in passing argument 1 of ‘int colorBound(const std::vector<int>&)’
+  154 | static int colorBound(const vector<int>& cand) {
+      |                       ~~~~~~~~~~~~~~~~~~~^~~~
+main_bitset.cpp: In function ‘int main(int, char**)’:
+main_bitset.cpp:281:9: error: ‘adj’ was not declared in this scope
+  281 |         adj.assign(N, vector<bool>(N, false));
+      |         ^~~
+=>> PBS: job killed: walltime 14476 exceeded limit 14400

@@ -1,29 +1,8 @@
 /*
- * main_bitset.cpp — MPI Parallel Branch and Bound (Bitset-accelerated variant)
+ * main_bitset.cpp — MPI Parallel Branch and Bound (Hybrid Bitset Variant)
  *
- * Differences from main.cpp (sort-based):
- *
- *  1. Adjacency stored as bitsets: adj_bits[u] is a WORDS-word uint64_t array.
- *     N=1200 → WORDS=19; each adjacency row is 19 × 8 = 152 bytes.
- *
- *  2. Candidate sets are bitsets throughout findClique.
- *     C_next = rem_bits AND adj_bits[v]  — O(WORDS) ≈ O(N/64) instead of O(|rem|).
- *     For k=1000 remaining candidates this is ≈50x fewer operations.
- *
- *  3. colorBound: iterate pre-sorted profit_order, skip non-candidates via bit test.
- *     Conflict tracking done with bitset OR of adj_bits[v] rows — O(WORDS) per vertex.
- *
- *  4. knapsackBound: iterate pre-sorted ratio_order, skip non-candidates via bit test.
- *     O(N) total, but no sort per call.
- *
- *  5. MPI async P_max sharing identical to main.cpp.
- *
- * When bitset wins vs sort-based:
- *   - Dense graphs (large k at each level): C_next AND is O(19) vs O(k)
- *   - Large N (N→1200): WORDS=19 is small; sort-based O(k log k) grows faster
- *
- * When sort-based wins:
- *   - Very sparse / tight-pruning: k << N at every level → sort O(k log k) < O(N)
+ * Combines dynamic per-call candidate sorting (O(k log k)) with 
+ * ultra-fast word-parallel bitset adjacency tracking (O(WORDS)).
  *
  * Compile: mpic++ -O3 -std=c++17 main_bitset.cpp -o par_bin_bitset
  * Run:     mpirun -np <P> ./par_bin_bitset input.txt output.txt
@@ -111,50 +90,56 @@ static vector<int> bits_to_vec(const vector<uint64_t>& bits) {
     return res;
 }
 
-/* ── Structural bound: pre-sorted greedy coloring with bitset conflicts ── */
-/*
- * Iterate vertices in profit_order (high → low).  Skip non-candidates.
- * Try to place each vertex in an existing color class (no adjacent member).
- * Track conflicts with bitset: conflict[c] |= adj_bits[v] when v is placed.
- * Upper bound = sum of max profit per class.
+/* ── Structural bound: greedy graph coloring (Hybrid Bitset) ──────────────────
+ * Sorts ONLY the current candidates, but uses bitsets for conflict tracking.
+ * conflict[c] tracks all neighbors of vertices placed in color class c.
  */
-// static int colorBound(const vector<uint64_t>& cand_bits) {
-//     vector<vector<uint64_t>> conflict;
-//     vector<int> class_max;
-//     conflict.reserve(32);
-//     class_max.reserve(32);
+static int colorBound(const vector<int>& cand) {
+    vector<int> sc = cand;
+    sort(sc.begin(), sc.end(), [](int a, int b){ return profit[a] > profit[b]; });
 
-//     for (int v : profit_order) {
-//         if (!test_bit(cand_bits, v)) continue;
+    vector<vector<uint64_t>> conflict;
+    vector<int> class_max;
+    conflict.reserve(32);
+    class_max.reserve(32);
 
-//         bool placed = false;
-//         for (int c = 0; c < (int)conflict.size(); c++) {
-//             if (test_bit(conflict[c], v)) continue;   // v adjacent to some member
-//             if (profit[v] > class_max[c]) class_max[c] = profit[v];
-//             for (int w = 0; w < WORDS; w++)
-//                 conflict[c][w] |= adj_bits[v][w];     // mark v's neighbors as conflicting
-//             placed = true; break;
-//         }
-//         if (!placed) {
-//             conflict.emplace_back(WORDS, 0ULL);
-//             class_max.push_back(profit[v]);
-//             for (int w = 0; w < WORDS; w++)
-//                 conflict.back()[w] |= adj_bits[v][w];
-//         }
-//     }
+    for (int v : sc) {
+        bool placed = false;
+        for (int c = 0; c < (int)conflict.size(); c++) {
+            if (test_bit(conflict[c], v)) continue;   // v is adjacent to a member of class c
 
-//     int U = 0;
-//     for (int mx : class_max) U += mx;
-//     return U;
-// }
+            if (profit[v] > class_max[c]) class_max[c] = profit[v];
+            
+            // Mark all of v's neighbors as conflicting with this class
+            for (int w = 0; w < WORDS; w++)
+                conflict[c][w] |= adj_bits[v][w];     
+            
+            placed = true; break;
+        }
+        if (!placed) {
+            conflict.emplace_back(WORDS, 0ULL);
+            class_max.push_back(profit[v]);
+            for (int w = 0; w < WORDS; w++)
+                conflict.back()[w] |= adj_bits[v][w];
+        }
+    }
 
-/* ── Resource bound: pre-sorted fractional knapsack ────────────────────── */
-static double knapsackBound(const vector<uint64_t>& cand_bits, int rem_budget) {
+    int U = 0;
+    for (int mx : class_max) U += mx;
+    return U;
+}
+
+/* ── Resource bound: fractional knapsack ────────────────────── */
+static double knapsackBound(const vector<int>& cand, int rem_budget) {                              
     if (rem_budget <= 0) return 0.0;
+    
+    vector<int> sc = cand;                                                                           
+    sort(sc.begin(), sc.end(), [](int a, int b){                             
+        return (double)profit[a]/cost_v[a] > (double)profit[b]/cost_v[b];
+    });                                                                      
 
     double U = 0.0; int rem = rem_budget;
-    for (int v : ratio_order) {
-        if (!test_bit(cand_bits, v)) continue;
+    for (int v : sc) {
         if (rem <= 0) break;
         if (cost_v[v] <= rem) { U += profit[v]; rem -= cost_v[v]; }
         else { U += (double)profit[v] * rem / cost_v[v]; rem = 0; }
@@ -166,16 +151,17 @@ static double knapsackBound(const vector<uint64_t>& cand_bits, int rem_budget) {
 static void findClique(const vector<uint64_t>& cand_bits, int P_curr, int W_curr) {
     if (mpi_size_g > 1) check_inbox();
 
+    /* Extract sorted list for iteration order AND bounding functions (once per call) */
+    vector<int> cand = bits_to_vec(cand_bits);   // ascending order
+    if (cand.empty()) return;
+
     /* ── 1. Structural bound ── */
-    if (P_curr + colorBound(cand_bits) <= P_max) return;
+    if (P_curr + colorBound(cand) <= P_max) return;
 
     /* ── 2. Resource bound ── */
-    if ((double)P_curr + knapsackBound(cand_bits, B - W_curr) <= (double)P_max) return;
+    if ((double)P_curr + knapsackBound(cand, B - W_curr) <= (double)P_max) return;
 
     /* ── 3. Branching ── */
-    /* Extract sorted list for iteration order; rem_bits tracks what's still available. */
-    vector<int> cand = bits_to_vec(cand_bits);   // ascending order
-
     /* Process back-to-front (highest index first), matching sort-based behaviour. */
     vector<uint64_t> rem_bits = cand_bits;
 
@@ -226,12 +212,18 @@ int main(int argc, char* argv[]) {
             MPI_Abort(MPI_COMM_WORLD, 1);
         }
         fin >> N >> E >> B;
-        WORDS = (N + 63) >> 6;
-        profit.resize(N); cost_v.resize(N);
-        adj_bits.assign(N, vector<uint64_t>(WORDS, 0ULL));
+        
+        WORDS = (N + 63) >> 6; // MUST BE CALCULATED BEFORE ASSIGNING ADJ_BITS
+        
+        profit.resize(N); 
+        cost_v.resize(N);
+        adj_bits.assign(N, vector<uint64_t>(WORDS, 0ULL)); 
+        
         for (int i = 0; i < N; i++) fin >> profit[i] >> cost_v[i];
         for (int i = 0; i < E; i++) {
             int u, v; fin >> u >> v;
+            
+            // Populate the bitsets
             set_bit(adj_bits[u], v);
             set_bit(adj_bits[v], u);
         }
