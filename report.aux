@@ -3,5 +3,7 @@
 \providecommand\HyField@AuxAddToFields[1]{}
 \providecommand\HyField@AuxAddToCoFields[2]{}
 \@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Strong scaling on \texttt  {input\_report.txt} ($N=500$, $E=74{,}743$, $B=90$). Left: speedup $T_1/T_p$. Right: parallel efficiency.}}{2}{figure.1}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Bitset variant timing on \texttt  {input\_report.txt}. Efficiency drops at 16 ranks due to load imbalance from static round-robin distribution at the first branching level.}}{2}{table.1}\protected@file@percent }
-\gdef \@abspage@last{2}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Timing on \texttt  {input\_report.txt} ($N=500$, $E=74{,}743$, $B=90$). Efficiency drops at 16 ranks as communication overhead grows relative to the shrinking per-rank workload.}}{2}{table.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Strong scaling on \texttt  {maxdense.txt} ($N=1000$, $E = 249599$, $B=500$). Left: speedup $T_1/T_p$. Right: parallel efficiency.}}{3}{figure.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Timing on \texttt  {maxdense.txt} ($N=1000$, $E = 249599$, $B=500$). Near-linear speedup up to 16 ranks due to the larger workload keeping all ranks busy throughout.}}{3}{table.2}\protected@file@percent }
+\gdef \@abspage@last{3}

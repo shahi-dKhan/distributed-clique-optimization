@@ -8,112 +8,128 @@
 
 \title{\textbf{Distributed Budgeted Maximum-Weight Clique}\\[4pt]
        \large MPI Branch-and-Bound: Parallelisation Strategy \& Scaling Results}
-\author{ee1221163}
+\author{Shahid Khan - 2022EE11163}
 \date{}
 
 \begin{document}
 \maketitle
 
 % ─────────────────────────────────────────────────────────────────────────────
-\section*{Problem}
-
-Given a graph $G=(V,E)$ with per-vertex profit $p(v)$ and cost $c(v)$, and a
-budget $B$, find a clique $S\subseteq V$ that maximises
-$\sum_{v\in S} p(v)$ subject to $\sum_{v\in S} c(v)\le B$.
-
-% ─────────────────────────────────────────────────────────────────────────────
 \section*{Parallelisation Strategy}
 
 The solver is an exact branch-and-bound (B\&B) with two pruning bounds:
 
-\begin{itemize}
-  \item \textbf{Structural bound (greedy graph colouring).}
-        Candidates are greedily assigned to independent sets (colour classes)
-        in decreasing profit order. The sum of the maximum profit per class
-        upper-bounds the profit of any clique formed from those candidates.
 
-  \item \textbf{Resource bound (fractional knapsack).}
-        Candidates are packed into the remaining budget in decreasing
-        profit/cost ratio order (fractional last item allowed), giving an
-        upper bound on achievable profit within the budget.
-\end{itemize}
 
 \subsection*{Bitset-accelerated candidate sets}
 
-Adjacency is stored as per-vertex bitsets (\texttt{uint64\_t} words,
-$\lceil N/64 \rceil$ words per vertex).  The next candidate set after
-branching on vertex $v$ is computed as a bitwise AND:
+Adjacency is stored as a flat contiguous array (\texttt{adj\_flat[N $\times$ WORDS]})
+for cache-friendly row access.  The next candidate set after branching on $v$ is:
 \[
-  C_{\text{next}} = C_{\text{rem}} \;\mathbin{\&}\; \mathrm{adj}[v]
+  C_{\text{next}}[w] = C_{\text{rem}}[w] \;\mathbin{\&}\; \texttt{adj\_flat}[v \cdot \text{WORDS} + w]
 \]
-in $O(N/64)$ operations instead of an $O(k)$ linear scan.
-For $N=500$ with $k\approx400$ remaining candidates, this reduces the
-intersection from $\sim$400 comparisons to $\sim$8 64-bit AND operations.
-Both bounds iterate globally pre-sorted arrays (\texttt{profit\_order},
-\texttt{ratio\_order}) with a $O(1)$ bit-test to skip non-candidates,
-eliminating per-call sorting entirely.
+computed in $O(\lceil N/64 \rceil)$ word operations instead of an $O(k)$ linear scan.
+
+Since $N\le1200$, bitsets never exceed 19 words (152 bytes). Candidate sets
+use fixed-size \texttt{std::array} storage (19 \texttt{uint64\_t} words),
+stack-allocated with zero heap allocation
+in the hot recursive path.  Per-depth candidate arrays (\texttt{depth\_cand\_flat})
+are pre-allocated once, eliminating \texttt{malloc}/\texttt{free} at every node.
+
+\subsection*{Bucket sort for coloring bound}
+
+Vertex profits satisfy $p(v)\in[1,100]$ (given by the problem constraints).
+The coloring bound sorts candidates by profit before greedy class assignment.
+Rather than \texttt{std::sort} ($O(k\log k)$), a counting/bucket sort over
+the range $[1,100]$ runs in $O(k)$ and is used for this step.
 
 \subsection*{Work distribution}
 
-All vertices affordable within $B$ form the \emph{initial candidate set}.
-At the \textbf{first branching level}, tasks are distributed among $P$ ranks
-using \textbf{static round-robin}: rank $r$ processes every $P$-th vertex
-($0, P, 2P, \ldots$ for rank~0; $1, P{+}1, 2P{+}1, \ldots$ for rank~1,
-etc.).  All ranks run the same outer loop so the shrinking candidate bitset
-stays identical across ranks; each rank computes its subtree's $C_{\text{next}}$
-independently with no communication.  Below the first level each rank runs its
-own sequential B\&B.
+All vertices whose cost fits within $B$ form the \emph{initial candidate set}.
+Each vertex in this set defines one independent first-level task (branch on that
+vertex, search its subtree).
+
+Tasks are distributed using \textbf{dynamic self-scheduling}:
+a shared counter on rank~0 is decremented atomically via
+\texttt{MPI\_Fetch\_and\_op} over a one-sided \texttt{MPI\_Win}.
+Each rank repeatedly claims the next available task until the counter is
+exhausted.  Because subtree sizes vary widely, this keeps all ranks busy
+and avoids the idle time that static assignment produces when some subtrees
+are much larger than others.  Below the first level, each rank runs its own
+sequential B\&B with no further communication.
 
 \subsection*{Asynchronous global lower-bound sharing}
 
-Whenever a rank discovers a new best profit $P_{\max}$ it immediately
-broadcasts the value to all other ranks via \texttt{MPI\_Isend}
-(non-blocking).  Before computing bounds at each B\&B node, every rank drains
-its inbox with \texttt{MPI\_Iprobe} + \texttt{MPI\_Recv}.  A tighter shared
-lower bound prunes more branches across all ranks simultaneously, reducing
-redundant work.
+Every rank maintains a local best profit $P_{\max}$.  The key insight is that
+a higher $P_{\max}$ shared across all ranks means tighter pruning everywhere —
+branches that cannot beat the global best are cut immediately.
 
-After local searches finish, \texttt{MPI\_Allreduce} with \texttt{MPI\_MAXLOC}
-selects the rank holding the true best clique (using the actual clique profit,
-not the potentially inflated $P_{\max}$); that rank broadcasts the vertex list
-and rank~0 writes the output.
+\begin{itemize}
+  \item \textbf{Sending:} whenever a rank finds a new best, it broadcasts
+        the profit value to every other rank with a non-blocking
+        \texttt{MPI\_Isend} — the search continues without waiting.
+  \item \textbf{Receiving:} at the start of each B\&B node, the rank drains
+        its message queue with \texttt{MPI\_Iprobe} + \texttt{MPI\_Recv},
+        updating its local $P_{\max}$ if a better value arrived.
+\end{itemize}
+
+At the end, \texttt{MPI\_Allreduce} with \texttt{MPI\_MAXLOC} identifies
+which rank holds the true global best clique.  That rank broadcasts the
+vertex list and rank~0 writes the output file.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \section*{Strong Scaling Results}
 
-\begin{figure}[h]
+\begin{figure}[htbp]
   \centering
   \includegraphics[width=\linewidth]{speedup_input_report.pdf}
-  \caption{Strong scaling on \texttt{input\_report.txt}
-           ($N=500$, $E=74{,}743$, $B=90$).
+  \caption{Strong scaling on \texttt{input\_report.txt} ($N=500$, $E=74{,}743$, $B=90$).
            Left: speedup $T_1/T_p$. Right: parallel efficiency.}
 \end{figure}
 
-\begin{table}[h]
+\begin{table}[htbp]
 \centering
-\begin{tabular}{rrrrrr}
+\begin{tabular}{rrrr}
 \toprule
 Procs & $T$ (s) & Speedup & Efficiency \\
 \midrule
-1  & 117.6 & 1.00  & 100.0\% \\
-2  &  63.8 & 1.85  &  92.2\% \\
-4  &  33.0 & 3.56  &  89.1\% \\
-8  &  19.5 & 6.04  &  75.5\% \\
-16 &  13.0 & 9.06  &  56.6\% \\
+1  & 8.130 & 1.000 & 100.0\% \\
+2  & 4.770 & 1.704 &  85.2\% \\
+4  & 2.760 & 2.946 &  73.6\% \\
+8  & 1.640 & 4.957 &  62.0\% \\
+16 & 1.250 & 6.504 &  40.7\% \\
 \bottomrule
 \end{tabular}
-\caption{Bitset variant timing on \texttt{input\_report.txt}.
-         Efficiency drops at 16 ranks due to load imbalance from
-         static round-robin distribution at the first branching level.}
+\caption{Timing on \texttt{input\_report.txt} ($N=500$, $E=74{,}743$, $B=90$).
+         Efficiency drops at 16 ranks as communication overhead grows
+         relative to the shrinking per-rank workload.}
 \end{table}
 
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\linewidth]{speedup_maxdense.pdf}
+  \caption{Strong scaling on \texttt{maxdense.txt} ($N=1000$, $E = 249599$, $B=500$).
+           Left: speedup $T_1/T_p$. Right: parallel efficiency.}
+\end{figure}
+
+\begin{table}[htbp]
+\centering
+\begin{tabular}{rrrr}
+\toprule
+Procs & $T$ (s) & Speedup & Efficiency \\
+\midrule
+1  & 184.630 & 1.000  & 100.0\% \\
+2  & 108.237 & 1.706  &  85.3\% \\
+4  &  54.280 & 3.401  &  85.0\% \\
+8  &  27.531 & 6.706  &  83.8\% \\
+16 &  14.275 & 12.934 &  80.8\% \\
+\bottomrule
+\end{tabular}
+\caption{Timing on \texttt{maxdense.txt} ($N=1000$, $E = 249599$, $B=500$).
+         Near-linear speedup up to 16 ranks due to the larger workload
+         keeping all ranks busy throughout.}
+\end{table}
+
+This maxdense.txt can be downloaded from \href{https://drive.google.com/file/d/1v1EkGnd4ypIoKiQ6QbthsGpoGAFKPaxV/view?usp=sharing}{link}
 % ─────────────────────────────────────────────────────────────────────────────
-\section*{Compilation}
-
-\begin{verbatim}
-g++    -O3 -std=c++17 sequential.cpp  -o seq_bin
-mpic++ -O3 -std=c++17 main_bitset.cpp -o par_bin
-mpirun -np 16 ./par_bin input_report.txt output.txt
-\end{verbatim}
-
 \end{document}
